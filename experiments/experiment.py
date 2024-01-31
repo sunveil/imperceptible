@@ -1,4 +1,7 @@
 #!/usr/bin/env python3
+from experiments.defence import defence
+from experiments.toxic.core.model import ModelWrapper
+
 try:
   import sys
   import torch
@@ -19,7 +22,7 @@ try:
   from time import process_time, sleep, time
   from torch.nn.functional import softmax
   from os.path import exists
-  from toxic.core.model import ModelWrapper
+  #from toxic.core.model import ModelWrapper
   from logging import getLogger, WARNING
   from googleapiclient.discovery_cache.base import Cache
   from googleapiclient import discovery
@@ -51,7 +54,7 @@ try:
   DEL = chr(0x7F)
   # Carriage return character
   CR = chr(0xD)
-
+  NLP_DEFENCE = False
   # Load Unicode Intentional homoglyph characters
   intentionals = dict()
   with open("intentional.txt", "r") as f:
@@ -897,7 +900,7 @@ class NerTargetedObjective():
 
   def objective(self) -> Callable[[List[float]], float]:
       def _objective(perturbations: List[float]) -> float:
-        candidate: str = self.candidate(perturbations)
+        candidate: str = defence(self.candidate(perturbations))
         predicts = self.model(candidate)
         score = 0
         for predict in predicts:
@@ -1617,15 +1620,16 @@ def ner_targeted_experiment(objective, model, inputs, file, min_budget, max_budg
           perturbs[exp_label][str(budget)][input['id']] = dict()
         for target in ner_classes:
           if target not in perturbs[exp_label][str(budget)][input['id']]:
-            sentence = detokenize(input['tokens'])
+            if NLP_DEFENCE:
+              sentence = defence(detokenize(input['tokens']))
+            else:
+              sentence = detokenize(input['tokens'])
             obj = objective(model, sentence, ner_tags(input['ner_tags']), target, budget)
             example = obj.differential_evolution(verbose=False, maxiter=maxiter, popsize=popsize)
             perturbs[exp_label][str(budget)][input['id']][target] = example
             with open(file, 'wb') as f:
               pickle.dump(perturbs, f)
-          else:
-            # Required for progress bar to update correctly
-            sleep(0.1)
+          sleep(0.1)
           pbar.update(1)
 
 def emotion_targeted_experiment(objective, model, inputs, file, min_budget, max_budget, maxiter, popsize, exp_label, overwrite):
@@ -1765,10 +1769,14 @@ if __name__ == '__main__':
   parser.add_argument('-o', '--overwrite', action='store_true', help="Overwrite existing results file instead of resuming.")
   parser.add_argument('-s', '--sponge', action='store_true', help="Perform an availability attack using sponge examples.")
   parser.add_argument('-R', '--rate-limit', type=int, default=10, help="The rate limit with which to throttle requests against the Google Perspective API (in QPS).")
+  parser.add_argument('-D', '--nlp-defence', action='store_true', help="Use nlp defence.")
   targeted = parser.add_mutually_exclusive_group()
   targeted.add_argument('-x', '--targeted', action='store_true', help="Perform a targeted attack.")
   targeted.add_argument('-X', '--targeted-no-logits', action='store_true', help="Perform a targeted attack without access to inference result logits.")
   args = parser.parse_args()
+
+  if args.nlp_defence:
+    NLP_DEFENCE = True
 
   if args.translation:
     if args.targeted or args.targeted_no_logits:
